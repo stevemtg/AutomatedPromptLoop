@@ -1,0 +1,159 @@
+{
+  "name": "automated-prompt-loop",
+  "displayName": "Prompt Loop",
+  "description": "Run, monitor, and recover a queue of Cline prompts in your current project.",
+  "version": "0.1.0",
+  "publisher": "local-prompt-loop",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "main": "./out/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:promptLoop.panel"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:extension": "npm run compile && node scripts/test-extension.cjs",
+    "test:live": "npm run compile && node scripts/test-extension.cjs --live",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "promptLoop.open",
+        "title": "Prompt Loop: Open Panel"
+      },
+      {
+        "command": "promptLoop.start",
+        "title": "Prompt Loop: Start"
+      },
+      {
+        "command": "promptLoop.pause",
+        "title": "Prompt Loop: Pause"
+      },
+      {
+        "command": "promptLoop.resume",
+        "title": "Prompt Loop: Resume"
+      },
+      {
+        "command": "promptLoop.retry",
+        "title": "Prompt Loop: Retry Current"
+      },
+      {
+        "command": "promptLoop.skip",
+        "title": "Prompt Loop: Skip Current"
+      },
+      {
+        "command": "promptLoop.stop",
+        "title": "Prompt Loop: Stop"
+      },
+      {
+        "command": "promptLoop.add",
+        "title": "Prompt Loop: Add Prompt"
+      },
+      {
+        "command": "promptLoop.logs",
+        "title": "Prompt Loop: Show Logs"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "promptLoop",
+          "title": "Prompt Loop",
+          "icon": "media/loop.svg"
+        }
+      ]
+    },
+    "views": {
+      "promptLoop": [
+        {
+          "id": "promptLoop.panel",
+          "name": "Prompt Queue",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Prompt Loop",
+      "properties": {
+        "promptLoop.stallTimeout": {
+          "type": "number",
+          "default": 180,
+          "minimum": 1,
+          "description": "Seconds without meaningful Cline activity before terminating and retrying an attempt."
+        },
+        "promptLoop.maxAttempts": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum attempts per prompt, including the first attempt. Manual Retry grants another attempt cycle."
+        },
+        "promptLoop.reminderText": {
+          "type": "string",
+          "default": "The previous attempt did not finish ({reason}). Check the project and verify what is already complete. Finish anything remaining from the original prompt, run relevant checks, and report completion only when the requested work is finished. This is attempt {attempt} of {maxAttempts}.",
+          "description": "Retry reminder. Supports {reason}, {attempt}, {maxAttempts}, and {prompt}."
+        },
+        "promptLoop.prompt_constant": {
+          "type": "string",
+          "default": "",
+          "editPresentation": "multilineText",
+          "description": "Instructions prepended to every prompt, including retry prompts."
+        },
+        "promptLoop.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Cline model override. Empty uses your Cline configuration."
+        },
+        "promptLoop.provider": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Cline provider override. Empty uses your Cline configuration."
+        },
+        "promptLoop.autoApprove": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow Cline to execute tools automatically. When false, headless Cline may deny tools requiring approval; the transcript shows the result."
+        },
+        "promptLoop.cliPath": {
+          "type": "string",
+          "default": "cline",
+          "scope": "machine",
+          "description": "Cline executable, npm cline shim, or JavaScript entry point. Usually discovered automatically."
+        },
+        "promptLoop.nodePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Optional Node.js executable path for an npm-installed Cline CLI."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^2.5.0",
+    "@vscode/vsce": "^3.6.0",
+    "playwright-core": "^1.63.0",
+    "typescript": "^5.9.0"
+  }
+}

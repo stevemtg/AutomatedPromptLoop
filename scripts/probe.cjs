@@ -1,0 +1,10 @@
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve('.test-artifacts/probe');
+fs.mkdirSync(root, { recursive: true });
+const log = fs.createWriteStream(path.join(root, 'events.ndjson'));
+const child = spawn(process.execPath, [path.join(process.env.APPDATA, 'npm/node_modules/cline/bin/cline'), '--json', '--auto-approve', 'true', '--cwd', root, '--timeout', '90', 'Create hello.txt containing exactly hi followed by a newline. Do not change any other files. Then confirm completion.'], { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+child.stdout.on('data', data => { log.write(data); process.stdout.write(data); });
+child.stderr.on('data', data => process.stderr.write(data));
+child.on('close', code => { log.end(); console.log('Cline exit:', code); process.exitCode = code ?? 1; });
