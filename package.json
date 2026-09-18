@@ -115,6 +115,7 @@
         "promptLoop.prompt_constant": {
           "type": "string",
           "default": "",
+          "scope": "resource",
           "editPresentation": "multilineText",
           "description": "Instructions prepended to every prompt, including retry prompts."
         },
