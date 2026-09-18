@@ -29,8 +29,12 @@ process.stdin.on('end', () => {
   const sessionId = args.includes('--id') ? args[args.indexOf('--id') + 1] : `fixture-${second?'second':'first'}`;
   emit({type:'session', sessionId});
   emit({type:'agent_event', event:{type:'content_start',contentType:'text',text:'Working…'}});
-  emit({type:'agent_event', event:{type:'content_start',contentType:'tool',toolName:'editor',input:{path:'hello.txt'}}});
+  emit({type:'agent_event', event:{type:'content_start',contentType:'reasoning',reasoning:'Checking the existing file before making the requested edit.'}});
+  emit({type:'agent_event', event:{type:'content_end',contentType:'reasoning',reasoning:'Checking the existing file before making the requested edit.'}});
+  emit({type:'agent_event', event:{type:'content_start',contentType:'tool',toolName:'editor',toolCallId:'edit-hello',input:{path:'hello.txt',new_text:second ? 'hi\nsecond\n' : 'hi\n'}}});
   fs.writeFileSync(path.join(workspace,'hello.txt'), second ? 'hi\nsecond\n' : 'hi\n');
+  emit({type:'agent_event', event:{type:'content_end',contentType:'tool',toolName:'editor',toolCallId:'edit-hello',output:{success:true,result:'Updated `hello.txt`.\n\n```diff\n+ hi\n' + (second ? '+ second\n' : '') + '```'},durationMs:12}});
+  emit({type:'agent_event', event:{type:'content_end',contentType:'text',text:'## File updated\n\n**Verified** the contents of `hello.txt`.\n\n- [x] Apply the requested edit\n- [x] Check the result\n\n```text\nhi\n' + (second ? 'second\n' : '') + '```'}});
   emit({type:'agent_event',event:{type:'usage',inputTokens:10,outputTokens:2,totalInputTokens:10,totalOutputTokens:2,totalCost:.01}});
   emit({type:'agent_event',event:{type:'done',reason:'completed',text:'Done',usage:{inputTokens:10,outputTokens:2,totalCost:.01}}});
   emit({type:'run_result',finishReason:'completed',usage:{inputTokens:10,outputTokens:2,totalCost:.01}});

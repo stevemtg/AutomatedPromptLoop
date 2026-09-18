@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { normalizeEvent } from './ndjson';
-import { emptyUsage, LogEntry, PromptItem, QueueState, RunHandle, Runner, Settings } from './types';
+import { emptyUsage, LogDisplay, LogEntry, PromptItem, QueueState, RunHandle, Runner, Settings } from './types';
 
 export function composePrompt(item: PromptItem, settings: Settings): string {
   const parts = [settings.prompt_constant.trim(), item.text];
@@ -21,6 +21,7 @@ export class PromptQueue extends EventEmitter {
   constructor(private readonly runner: Runner, private readonly settings: () => Settings, saved?: QueueState) {
     super();
     this.state = saved?.version === 1 ? structuredClone(saved) : { version: 1, status: 'idle', items: [], activity: 'Ready when you are', logs: [] };
+    for (const entry of this.state.logs) entry.id ??= randomUUID();
     if (this.state.status === 'running' || this.state.items.some(item => item.status === 'running')) {
       this.state.status = 'paused';
       this.state.activity = 'Previous run interrupted. Resume Queue to continue.';
@@ -33,18 +34,29 @@ export class PromptQueue extends EventEmitter {
   snapshot(): QueueState { return structuredClone(this.state); }
   get busy(): boolean { return !!this.loop; }
   private change(): void { this.emit('change'); }
-  private log(kind: LogEntry['kind'], message: string, item?: PromptItem, data?: unknown): void {
-    const entry: LogEntry = { time: new Date().toISOString(), kind, message: message.slice(0, 20000), promptId: item?.id, attempt: item?.attempts, data };
+  private log(kind: LogEntry['kind'], message: string, item?: PromptItem, data?: unknown, display?: LogDisplay): void {
+    const entry: LogEntry = { id: randomUUID(), time: new Date().toISOString(), kind, message: message.slice(0, 20000), promptId: item?.id, attempt: item?.attempts, data, display };
     this.emit('log', entry);
     const previous = this.state.logs.at(-1);
     const event = (data as any)?.event;
     const previousEvent = (previous?.data as any)?.event;
-    if (kind === 'text' && previous?.kind === 'text' && previous.promptId === item?.id && previous.attempt === item?.attempts
+    const tool = display?.type === 'tool' && display.callId ? [...this.state.logs].reverse().find(log =>
+      log.display?.type === 'tool' && log.display.callId === display.callId && log.display.agentId === display.agentId
+      && log.promptId === item?.id && log.attempt === item?.attempts) : undefined;
+    if (tool && display?.type === 'tool') {
+      const previousDisplay = tool.display as Extract<LogDisplay, { type: 'tool' }>;
+      tool.display = { ...previousDisplay, ...display,
+        name: display.name === 'Tool' ? previousDisplay.name : display.name,
+        status: display.status === 'unknown' ? previousDisplay.status : display.status
+      };
+      tool.message = message.slice(0, 20000); tool.data = data;
+    } else if (kind === 'text' && previous?.kind === 'text' && previous.promptId === item?.id && previous.attempt === item?.attempts
       && event?.contentType === previousEvent?.contentType && event?.type?.startsWith('content_') && previousEvent?.type !== 'content_end') {
       previous.message = (event.type === 'content_end' ? message : previous.message + message).slice(-20000);
       previous.data = data;
     } else {
-      this.state.logs.push(entry);
+      // Keep emitted disk-log records immutable when a display entry streams updates.
+      this.state.logs.push({ ...entry });
       if (this.state.logs.length > 500) this.state.logs.shift();
     }
     this.change();
@@ -169,7 +181,7 @@ export class PromptQueue extends EventEmitter {
             }
           }
           if (event.kind === 'tool') this.state.activity = event.message.slice(0, 180);
-          this.log(event.kind, event.message, item, raw);
+          this.log(event.kind, event.message, item, raw, event.display);
         }, diagnostic => this.log('diagnostic', diagnostic, item));
         const active = this.active;
         timer = setInterval(() => {

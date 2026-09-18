@@ -6,9 +6,16 @@ export interface PromptItem {
   sessionId?: string; error?: string; usage: Usage;
 }
 export interface LogEntry {
+  id?: string;
   time: string; kind: 'queue' | 'text' | 'tool' | 'usage' | 'error' | 'diagnostic' | 'event';
   message: string; promptId?: string; attempt?: number; data?: unknown;
+  display?: LogDisplay;
 }
+export type LogDisplay = { type: 'response' | 'reasoning' } | {
+  type: 'tool'; name: string; callId?: string; agentId?: string;
+  status: 'running' | 'completed' | 'failed' | 'unknown';
+  input?: string; output?: string; outputFormat?: 'markdown' | 'json'; summary?: string; durationMs?: number;
+};
 export interface QueueState {
   version: 1; status: QueueStatus; workspace?: string; items: PromptItem[];
   currentId?: string; activity: string; logs: LogEntry[];

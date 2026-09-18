@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PromptQueue } from '../queue';
-import { defaultSettings, Runner, RunRequest, RunResult, Settings } from '../types';
+import { defaultSettings, LogEntry, Runner, RunRequest, RunResult, Settings } from '../types';
 const done = {type:'run_result',finishReason:'completed',usage:{inputTokens:10,outputTokens:2,totalCost:.01}};
 function setup(runner: Runner, overrides: Partial<Settings> = {}) {
   const queue = new PromptQueue(runner,()=>({...defaultSettings,...overrides})); queue.setWorkspace(process.cwd()); return queue;
@@ -77,4 +77,52 @@ test('pausing during retry backoff does not start another process',async()=>{
   let launches=0;const queue=setup(()=>{launches++;return {result:Promise.resolve({code:1}),cancel:async()=>{}};});
   queue.on('log',entry=>{if(entry.message==='Retrying with completion reminder') void queue.pause();});
   queue.add(['one']);queue.start();await queue.whenIdle();assert.equal(launches,1);assert.equal(queue.snapshot().status,'paused');
+});
+
+test('streaming activity keeps stable IDs and paired tools without mutating emitted log records', async () => {
+  const emitted: LogEntry[] = [];
+  const queue = setup(scripted([event => {
+    event({type:'agent_event',event:{type:'content_start',contentType:'text',text:'Hel'}});
+    event({type:'agent_event',event:{type:'content_delta',contentType:'text',text:'lo'}});
+    event({type:'agent_event',event:{type:'content_end',contentType:'text',text:'Hello'}});
+    event({type:'agent_event',event:{type:'content_start',contentType:'tool',toolCallId:'a',toolName:'editor',input:{path:'hello.txt'}}});
+    event({type:'agent_event',event:{type:'content_start',contentType:'tool',toolCallId:'b',toolName:'read_files',input:{path:'other.txt'}}});
+    event({type:'agent_event',parentAgentId:'child',event:{type:'content_start',contentType:'tool',toolCallId:'a',toolName:'editor',input:{path:'child.txt'}}});
+    event({type:'agent_event',event:{type:'content_update',contentType:'tool',toolCallId:'a',update:'Saving…'}});
+    event({type:'agent_event',event:{type:'content_end',contentType:'tool',toolCallId:'a',output:{success:true,result:'Saved'},durationMs:10}});
+    event({type:'agent_event',event:{type:'content_end',contentType:'tool',toolCallId:'b',toolName:'read_files',output:{success:false,result:'Missing'}}});
+    event(done); return {code:0};
+  }, event => {
+    event({type:'agent_event',event:{type:'content_start',contentType:'tool',toolCallId:'a',toolName:'editor',input:{path:'next.txt'}}});
+    event(done); return {code:0};
+  }]));
+  queue.on('log', entry => emitted.push(entry));
+  queue.add(['first', 'second']); queue.start(); await queue.whenIdle();
+  const logs = queue.snapshot().logs;
+  const text = logs.filter(entry => entry.kind === 'text');
+  assert.equal(text.length, 1); assert.equal(text[0].message, 'Hello');
+  assert.equal(text[0].id, emitted.find(entry => entry.kind === 'text')!.id);
+  assert.equal(emitted.find(entry => entry.kind === 'text')!.message, 'Hel', 'Disk events remain immutable');
+  const tools = logs.filter(entry => entry.display?.type === 'tool');
+  assert.equal(tools.length, 4, 'Only matching call IDs in the same prompt, attempt and agent are joined');
+  const first = tools[0].display;
+  assert.ok(first?.type === 'tool'); assert.equal(first.name, 'editor'); assert.equal(first.status, 'completed'); assert.equal(first.output, 'Saved'); assert.match(first.input!, /hello.txt/);
+  assert.equal(tools[0].id, emitted.find(entry => entry.kind === 'tool')!.id);
+  assert.equal(emitted.filter(entry => entry.kind === 'tool').length, 7, 'All tool events still reach the full log');
+  const persisted = {...queue.snapshot(), logs: logs.map(({data, ...entry}) => entry)};
+  const restored = new PromptQueue(() => { throw new Error('No run'); }, () => defaultSettings, persisted);
+  assert.deepEqual(restored.snapshot().logs.filter(entry => entry.kind === 'tool').map(entry => entry.display), tools.map(entry => entry.display));
+});
+
+test('older saved logs receive unique IDs even when their timestamps match', () => {
+  const queue = setup(() => { throw new Error('No run'); });
+  const saved = queue.snapshot();
+  saved.logs = [
+    {time:'2026-09-17T00:00:00.000Z',kind:'tool',message:'first tool'},
+    {time:'2026-09-17T00:00:00.000Z',kind:'tool',message:'second tool'}
+  ];
+  const restored = new PromptQueue(() => { throw new Error('No run'); }, () => defaultSettings, saved);
+  const logs = restored.snapshot().logs;
+  assert.ok(logs.every(entry => entry.id)); assert.notEqual(logs[0].id, logs[1].id);
+  assert.deepEqual(logs.map(entry => entry.message), ['first tool', 'second tool']);
 });

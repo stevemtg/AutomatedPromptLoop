@@ -27,3 +27,15 @@ test('Cline 3 content, completion and cumulative usage records normalize correct
 test('iteration end, tool success, and human text do not falsely signal task completion', () => {
   for (const event of [{type:'iteration_end',hadToolCalls:false},{type:'content_end',contentType:'tool',output:{success:true}},{type:'text',text:'done'},{type:'run_result',finishReason:'aborted'}]) assert.equal(normalizeEvent({type:'agent_event',event}).success,false);
 });
+
+test('tool display preserves inputs, readable results, failures, and bounded content', () => {
+  const start = normalizeEvent({type:'agent_event',event:{type:'content_start',contentType:'tool',toolName:'editor',toolCallId:'call-1',input:{path:'hello.txt',new_text:'hi\n'}}});
+  assert.deepEqual(start.display, {type:'tool',name:'editor',callId:'call-1',status:'running',input:'{\n  "path": "hello.txt",\n  "new_text": "hi\\n"\n}',summary:'hello.txt'});
+  const result = normalizeEvent({type:'agent_event',event:{type:'content_end',contentType:'tool',toolName:'editor',toolCallId:'call-1',output:[{success:false,result:'Permission denied'}],durationMs:8}});
+  assert.deepEqual(result.display,{type:'tool',name:'editor',callId:'call-1',status:'failed',output:'Permission denied',outputFormat:'markdown',durationMs:8});
+  assert.equal(result.success,false,'A tool result never completes the task');
+  assert.equal(result.failure,undefined,'Tool failures are shown without changing queue completion semantics');
+  const huge = normalizeEvent({type:'tool_result',output:'x'.repeat(25000)}).display;
+  assert.ok(huge?.type === 'tool'); assert.match(huge.output!,/Truncated/); assert.ok(huge.output!.length < 20100);
+  assert.equal(normalizeEvent({type:'agent_event',event:{type:'content_start',contentType:'reasoning',reasoning:'Check'}}).display?.type,'reasoning');
+});

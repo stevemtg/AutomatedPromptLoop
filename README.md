@@ -58,9 +58,13 @@ With auto-approve disabled, headless Cline may deny tools that require interacti
 
 ## Transcript and logs
 
-The sidebar shows prompt status, attempt counts, live text and tool calls, session ID, and total input/output tokens and reported cost across attempts. Cumulative usage records are deduplicated. Cost is whatever Cline reports; a local provider may report zero.
+The sidebar shows prompt status, attempt counts, session ID, and total input/output tokens and reported cost across attempts. Cumulative usage records are deduplicated. Cost is whatever Cline reports; a local provider may report zero.
 
-Every lifecycle transition, diagnostic, and structured Cline event is appended to a timestamped NDJSON log in VS Code's extension storage. **Full log file** opens the current file; **Output log** opens the Prompt Loop output channel. The sidebar retains the latest 500 display records (shows the latest 150 non-event records), and workspace state keeps the latest 150 records for reloads. Full event logs remain on disk and may contain prompts, tool inputs, and tool outputs; retention is manual.
+The **Activity** feed groups entries by prompt and attempt. Cline responses render headings, emphasis, lists, checklists, tables, links, and fenced code blocks, with colored additions and removals in `diff` blocks. Thinking and diagnostics are collapsed by default. Tool calls expand to show their input, output, reported duration, and status; matching call IDs combine streamed updates into one card. **Unconfirmed** means no final tool result was received before the attempt ended.
+
+Use **All**, **Responses**, **Tools**, or **Problems** and **Search activity** to narrow the feed. **Copy** above the feed copies the matching entries; individual entries and code blocks have their own copy buttons. **Follow activity** tracks incoming output, pauses when you scroll up, and resumes with **Latest activity**. Expanded cards and your reading position survive streaming updates. Drag the feed's bottom edge to resize it.
+
+Every lifecycle transition, diagnostic, and structured Cline event is appended to a timestamped NDJSON log in VS Code's extension storage. **Full log file** opens the current file; **Output log** opens the Prompt Loop output channel. The sidebar retains the latest 500 display records and shows the latest 150 activity entries; raw events and usage records are omitted from the feed because usage totals appear above it. Workspace state keeps the latest 150 records, including tool display details, for reloads. Display fields are limited to 20,000 characters each; full event logs remain on disk and may contain prompts, tool inputs, and tool outputs. Log retention is manual.
 
 ## CLI compatibility
 
@@ -84,4 +88,6 @@ The host tests create isolated scratch projects and user profiles in `.test-arti
 
 On Windows, tests use the installed VS Code. Override `VSCODE_EXECUTABLE` for a different installation; set `PROMPT_LOOP_REAL_CLI` to a custom Cline JavaScript entry point. Other platforms can let `@vscode/test-electron` download a compatible host.
 
-The implementation follows the [VS Code webview API](https://code.visualstudio.com/api/extension-guides/webview) and [Cline CLI reference](https://github.com/cline/cline/blob/main/docs/cli/cli-reference.mdx). Webview content uses a restrictive CSP, local assets, and text-only rendering of prompt/model output.
+The deterministic host suite also checks Markdown and tool cards, filters and search, clipboard actions, safe rendering of untrusted output, and reading position during streaming. An `activity.png` screenshot is saved alongside the other test artifacts.
+
+The implementation follows the [VS Code webview API](https://code.visualstudio.com/api/extension-guides/webview) and [Cline CLI reference](https://github.com/cline/cline/blob/main/docs/cli/cli-reference.mdx). Webview content uses a restrictive CSP and local assets. Markdown is built with DOM text nodes: raw HTML stays inert, images are not loaded, and only clicked HTTP(S) links can open externally.

@@ -9,7 +9,8 @@
   $('prompt').value = cached.draft || '';
   $('constant').value = cached.constant || '';
   const send = (type, fields = {}) => vscode.postMessage({ type, ...fields });
-  const saveDraft = () => vscode.setState({ draft: $('prompt').value, constant: $('constant').value, constantDirty });
+  const saveDraft = () => vscode.setState({ draft: $('prompt').value, constant: $('constant').value, constantDirty, activity: transcript.preferences() });
+  const transcript = new window.PromptLoopTranscript(send, cached.activity, saveDraft);
   for (const id of ['start','pause','resume','retry','skip','stop','workspace','settings','logs','logfile','import','export']) $(id).addEventListener('click', () => { $('notice').hidden = true; send(id); });
   $('prompt').addEventListener('input', saveDraft);
   $('constant').addEventListener('input', () => { constantDirty = true; $('constantSaved').textContent = 'Unsaved'; saveDraft(); });
@@ -52,20 +53,10 @@
     });
     $('queue').replaceChildren(fragment);
   }
-  function renderTranscript(logs) {
-    const transcript = $('transcript'); const oldTop = transcript.scrollTop;
-    const fragment = document.createDocumentFragment();
-    logs.filter(entry=>entry.kind!=='event').slice(-150).forEach(entry=>{
-      const row=document.createElement('div');row.className='log-entry';row.dataset.kind=entry.kind;
-      const label=document.createElement('div');label.className='log-label';label.textContent=`${new Date(entry.time).toLocaleTimeString()} · ${entry.kind.toUpperCase()}${entry.attempt ? ` · attempt ${entry.attempt}` : ''}`;
-      const content=document.createElement('pre');content.textContent=entry.message;row.append(label,content);fragment.append(row);
-    });
-    transcript.replaceChildren(fragment);
-    transcript.scrollTop=$('follow').checked?transcript.scrollHeight:oldTop;
-  }
   window.addEventListener('message', ({ data }) => {
     if(data.type==='error') { $('notice').textContent=data.message;$('notice').hidden=false;return; }
     if(data.type==='constantSaved') { constantDirty=false;$('constantSaved').textContent='Saved';saveDraft();return; }
+    if(data.type==='copied') { transcript.copied(); return; }
     if(data.type!=='state') return;
     const {state,settings,busy}=data;currentState=state;
     const completed=state.items.filter(item=>item.status==='succeeded').length;
@@ -90,7 +81,7 @@
     const usage=state.items.reduce((sum,item)=>({inputTokens:sum.inputTokens+item.usage.inputTokens,outputTokens:sum.outputTokens+item.usage.outputTokens,cost:sum.cost+item.usage.cost}),{inputTokens:0,outputTokens:0,cost:0});
     $('tokensIn').textContent=usage.inputTokens.toLocaleString();$('tokensOut').textContent=usage.outputTokens.toLocaleString();$('cost').textContent=`$${usage.cost.toFixed(4)}`;
     $('footer').textContent=`${settings.stallTimeout}s stall timeout · ${settings.maxAttempts} attempts · auto-approve ${settings.autoApprove?'on':'off'}`;
-    renderQueue(state.items);renderTranscript(state.logs);
+    renderQueue(state.items);transcript.update(state.logs, state.items, busy && state.status === 'running');
   });
   send('ready');
 })();

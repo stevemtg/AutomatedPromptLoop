@@ -1,4 +1,5 @@
 import { StringDecoder } from 'node:string_decoder';
+import { LogDisplay } from './types';
 
 /** Handles split UTF-8 characters, multiple records per chunk and a final line without LF. */
 export class NdjsonParser {
@@ -39,8 +40,46 @@ type RecordValue = Record<string, any>;
 function object(value: unknown): RecordValue { return value !== null && typeof value === 'object' ? value as RecordValue : {}; }
 export interface NormalizedEvent {
   kind: 'text' | 'tool' | 'usage' | 'error' | 'event'; message: string;
+  display?: LogDisplay;
   sessionId?: string; success: boolean; failure?: string; meaningful: boolean;
   usage?: { inputTokens: number; outputTokens: number; cost: number; cumulative: boolean };
+}
+// Only bounded, presentational fields cross into the webview or workspace state.
+function displayText(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  return text.length > 20000 ? text.slice(0, 20000) + '\n… Truncated. Open the full log file for more.' : text;
+}
+function toolDisplay(event: RecordValue, outer: RecordValue, type: string): LogDisplay {
+  const output = event.output ?? event.update ?? event.result;
+  const outputs = Array.isArray(output) ? output : [output];
+  const failed = /error|failed/.test(type) || event.success === false || event.is_error === true
+    || outputs.some(value => object(value).success === false || object(value).is_error === true || object(value).error);
+  const completed = type === 'content_end' || /tool_(result|end|complete)/.test(type) || event.output !== undefined;
+  const display: Extract<LogDisplay, { type: 'tool' }> = {
+    type: 'tool', name: String(event.toolName ?? event.name ?? object(event.toolCall).name ?? 'Tool').slice(0, 200),
+    status: failed ? 'failed' : completed ? 'completed' : /start|tool_call/.test(type) ? 'running' : 'unknown'
+  };
+  const callId = event.toolCallId ?? object(event.toolCall).id;
+  const agentId = outer.parentAgentId ?? event.parentAgentId;
+  if (typeof callId === 'string') display.callId = callId.slice(0, 500);
+  if (typeof agentId === 'string') display.agentId = agentId.slice(0, 500);
+  if (event.input !== undefined) {
+    display.input = displayText(event.input);
+    const input = object(event.input);
+    const summary = input.path ?? input.command ?? input.query ?? (Array.isArray(input.files) ? input.files.map(file => object(file).path).filter(Boolean).join(', ') : undefined);
+    if (typeof summary === 'string') display.summary = summary.slice(0, 300);
+  }
+  if (output !== undefined) {
+    const results = outputs.map(value => object(value));
+    if (typeof output === 'string') { display.output = displayText(output); display.outputFormat = 'markdown'; }
+    else if (results.length && results.every(value => typeof value.result === 'string')) {
+      display.output = displayText(results.map(value => `${results.length > 1 && typeof value.query === 'string' ? value.query + '\n\n' : ''}${value.result}`).join('\n\n---\n\n'));
+      display.outputFormat = 'markdown';
+    } else { display.output = displayText(output); display.outputFormat = 'json'; }
+  }
+  if (typeof event.durationMs === 'number' && Number.isFinite(event.durationMs) && event.durationMs >= 0) display.durationMs = event.durationMs;
+  return display;
 }
 export function normalizeEvent(raw: unknown): NormalizedEvent {
   const outer = object(raw);
@@ -67,6 +106,7 @@ export function normalizeEvent(raw: unknown): NormalizedEvent {
     ?? (isTool ? `${event.toolName ?? event.name ?? object(event.toolCall).name ?? type}: ${JSON.stringify(event.input ?? event.output ?? event.update ?? '')}` : failed ? `Cline finished: ${finishReason ?? type}` : type));
   return {
     kind: failed ? 'error' : isTool ? 'tool' : hasUsage ? 'usage' : isText ? 'text' : 'event',
+    display: isTool ? toolDisplay(event, outer, type) : isText ? { type: event.contentType === 'reasoning' || /reasoning/.test(type) ? 'reasoning' : 'response' } : undefined,
     message, sessionId: typeof sessionId === 'string' ? sessionId : undefined,
     success, failure: failed && !childEvent ? message : undefined,
     meaningful: type !== 'heartbeat' && type !== 'ping' && type !== 'keepalive' && outer.level === undefined,
