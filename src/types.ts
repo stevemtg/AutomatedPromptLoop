@@ -23,11 +23,19 @@ export interface QueueState {
 export interface Settings {
   stallTimeout: number; maxAttempts: number; reminderText: string; prompt_constant: string;
   model: string; provider: string; autoApprove: boolean; cliPath: string; nodePath: string;
+  thinking: '' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  compaction: '' | 'agentic' | 'basic' | 'off';
+  cliRetries: number;
+  ollamaEnabled: boolean; ollamaContextWindow: number; ollamaKeepAlive: string;
+  ollamaRequestTimeout: number; ollamaOptions: Record<string, number>;
 }
 export const defaultSettings: Settings = {
   stallTimeout: 180, maxAttempts: 3,
   reminderText: 'The previous attempt did not finish ({reason}). Check the project and verify what is already complete. Finish anything remaining from the original prompt, run relevant checks, and report completion only when the requested work is finished. This is attempt {attempt} of {maxAttempts}.',
-  prompt_constant: '', model: '', provider: '', autoApprove: true, cliPath: 'cline', nodePath: ''
+  prompt_constant: '', model: '', provider: '', autoApprove: true, cliPath: 'cline', nodePath: '',
+  thinking: '', compaction: '', cliRetries: 0,
+  ollamaEnabled: true, ollamaContextWindow: 0, ollamaKeepAlive: '',
+  ollamaRequestTimeout: 900, ollamaOptions: {}
 };
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cost: 0 });
 export interface RunRequest { workspace: string; prompt: string; sessionId?: string; settings: Settings }

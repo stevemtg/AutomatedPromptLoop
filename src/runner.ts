@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { NdjsonParser } from './ndjson';
 import { Runner, RunRequest, RunResult, Settings } from './types';
 import { findSession, sessionDirectories, sessionsDirectory } from './sessions';
+import { OllamaRuntime, prepareOllama } from './ollama';
 
 function findExecutable(name: string, extra: string[] = []): string | undefined {
   if (path.isAbsolute(name)) return existsSync(name) ? name : undefined;
@@ -38,6 +39,9 @@ export function buildArgs(request: RunRequest): string[] {
   const args = ['--json', '--auto-approve', String(request.settings.autoApprove), '--cwd', request.workspace];
   if (request.settings.model) args.push('--model', request.settings.model);
   if (request.settings.provider) args.push('--provider', request.settings.provider);
+  if (request.settings.thinking) args.push('--thinking', request.settings.thinking);
+  if (request.settings.compaction) args.push('--compaction', request.settings.compaction);
+  if (request.settings.cliRetries > 0) args.push('--retries', String(request.settings.cliRetries));
   if (request.sessionId) args.push('--id', request.sessionId);
   args.push('--', request.prompt);
   return args;
@@ -59,7 +63,7 @@ async function terminateTree(child: ChildProcess): Promise<void> {
     try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
   }
 }
-const spawnCline: Runner = (request, onEvent, onDiagnostic) => {
+const spawnCline = (request: RunRequest, onEvent: (event: unknown) => void, onDiagnostic: (text: string) => void, env: NodeJS.ProcessEnv = {}): ReturnType<Runner> => {
   const resolved = resolveCli(request.settings);
   const args = [...resolved.prefix, ...buildArgs(request)];
   if (process.platform === 'win32' && resolved.command.length + args.reduce((length, arg) => length + arg.length * 2 + 3, 0) > 30000) {
@@ -67,7 +71,7 @@ const spawnCline: Runner = (request, onEvent, onDiagnostic) => {
   }
   const child = spawn(resolved.command, args, {
     cwd: request.workspace, shell: false, windowsHide: true, detached: process.platform !== 'win32',
-    env: { ...process.env, PATH: [path.dirname(resolved.command), process.env.PATH].filter(Boolean).join(path.delimiter), CLINE_SESSION_BACKEND_MODE: 'local' },
+    env: { ...process.env, ...env, PATH: [path.dirname(resolved.command), process.env.PATH].filter(Boolean).join(path.delimiter), CLINE_SESSION_BACKEND_MODE: 'local' },
     stdio: ['pipe', 'pipe', 'pipe']
   });
   const parser = new NdjsonParser(onEvent, onDiagnostic);
@@ -112,13 +116,16 @@ export const runCline: Runner = (request, onEvent, onDiagnostic) => {
       finally { polling = false; }
     };
     let timer: NodeJS.Timeout | undefined;
+    let ollama: OllamaRuntime | undefined;
     try {
+      ollama = await prepareOllama(request.settings, onEvent, onDiagnostic);
+      if (cancelled) return { code: null, signal: 'cancelled' };
       handle = spawnCline(request, event => {
         const record = event as Record<string, unknown> | null;
         if (record?.sessionId || record?.session_id) captured = true;
         if (record?.type === 'error') inspectCompatibility(String(record.message ?? ''));
         onEvent(event);
-      }, text => { inspectCompatibility(text); onDiagnostic(text); });
+      }, text => { inspectCompatibility(text); onDiagnostic(text); }, ollama?.env);
       timer = setInterval(() => { lastPoll = poll(); }, 500);
       const exit = await handle.result;
       clearInterval(timer); await lastPoll; await poll();
@@ -131,7 +138,10 @@ export const runCline: Runner = (request, onEvent, onDiagnostic) => {
       if (!captured) onDiagnostic('No stable Cline session ID found. A retry will start a new session with the original prompt and reminder.');
       return exit;
     } catch (error) { return { code: null, error: error instanceof Error ? error.message : String(error) }; }
-    finally { if (timer) clearInterval(timer); }
+    finally {
+      if (timer) clearInterval(timer);
+      try { await ollama?.close(); } catch (error) { onDiagnostic(`Ollama adapter cleanup: ${error}`); }
+    }
   })();
   return { result, cancel: async () => { cancelled = true; if (handle) await handle.cancel(); } };
 };

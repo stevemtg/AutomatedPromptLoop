@@ -160,12 +160,18 @@ export class PromptQueue extends EventEmitter {
       item.status = 'running'; item.attempts++; item.cycleAttempts++; this.state.currentId = item.id;
       this.state.activity = `Prompt ${this.state.items.indexOf(item) + 1} · attempt ${item.attempts}`;
       let lastActivity = Date.now(), success = false, failure: string | undefined, stalled = false;
+      const inferenceRequests = new Set<string>();
       const baseUsage = { ...item.usage };
       const usage = emptyUsage();
       this.log('queue', `Attempt ${item.attempts} started${item.sessionId ? `; resuming ${item.sessionId}` : '; new session'}.`, item);
       let timer: NodeJS.Timeout | undefined;
       try {
         this.active = this.runner({ workspace: this.state.workspace!, prompt: composePrompt(item, settings), sessionId: item.sessionId, settings }, raw => {
+          const inference = raw as { type?: string; id?: string; phase?: string };
+          if (inference?.type === 'ollama_request' && inference.id) {
+            if (inference.phase === 'started') inferenceRequests.add(inference.id);
+            else if (inference.phase === 'finished') inferenceRequests.delete(inference.id);
+          }
           if ((raw as { type?: string })?.type === 'session_reset') item.sessionId = undefined;
           const event = normalizeEvent(raw);
           if (event.meaningful) lastActivity = Date.now();
@@ -185,7 +191,9 @@ export class PromptQueue extends EventEmitter {
         }, diagnostic => this.log('diagnostic', diagnostic, item));
         const active = this.active;
         timer = setInterval(() => {
-          if (!stalled && !this.interruption && Date.now() - lastActivity >= settings.stallTimeout * 1000) {
+          // The Ollama adapter owns a real HTTP inactivity timeout during model
+          // loading/prefill. A short tool watchdog must not repeatedly kill it.
+          if (!stalled && !this.interruption && inferenceRequests.size === 0 && Date.now() - lastActivity >= settings.stallTimeout * 1000) {
             stalled = true; failure = `No meaningful activity for ${settings.stallTimeout} seconds`;
             this.log('error', failure, item);
             void active.cancel().catch(error => { this.state.status = 'paused'; this.log('error', `Could not stop stalled process: ${error}`, item); });
