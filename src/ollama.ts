@@ -106,6 +106,7 @@ export async function startOllamaBridge(upstream: string, settings: Settings, pr
         const parser = new NdjsonParser(raw => {
           const value = raw as Json;
           if (value?.done === true) {
+            if (chat) onEvent({ type: 'generation_metrics', requestId: id, outputTokens: value.eval_count, durationMs: value.eval_duration / 1e6 });
             const rate = value.eval_duration > 0 ? (value.eval_count / (value.eval_duration / 1e9)).toFixed(1) : undefined;
             diagnostic(`Ollama: ${value.prompt_eval_count ?? 0} prompt tokens, ${value.eval_count ?? 0} generated tokens${rate ? `, ${rate} tokens/s` : ''}, ${((value.load_duration ?? 0) / 1e9).toFixed(2)}s loading, ${value.prompt_eval_cached_count ?? 0} cached prompt tokens.`);
           }

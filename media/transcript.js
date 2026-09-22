@@ -14,6 +14,26 @@
     return node;
   };
 
+  function imagePreview(image, onResize) {
+    const figure = element('figure', 'activity-image');
+    const preview = element('img');
+    preview.alt = image.label || 'Tool image';
+    preview.referrerPolicy = 'no-referrer';
+    const caption = element('figcaption', '', preview.alt);
+    const unavailable = () => {
+      preview.hidden = true;
+      caption.textContent = `${preview.alt} — Preview unavailable. Check the tool output or full log for the source.`;
+      onResize();
+    };
+    preview.addEventListener('load', onResize);
+    preview.addEventListener('error', unavailable);
+    // Defense in depth: never let a tool result become markup or an executable URL.
+    if (/^(https?:\/\/|data:image\/(?:png|jpeg|webp|gif);base64,|vscode-webview-resource:|vscode-resource:)/i.test(image.src)) preview.src = image.src;
+    else unavailable();
+    figure.append(preview, caption);
+    return figure;
+  }
+
   // Model output is always text, never HTML. Links require a click and an HTTP(S) URL.
   function inline(parent, text, send, depth = 0) {
     if (depth > 5) { parent.append(document.createTextNode(text)); return; }
@@ -194,6 +214,10 @@
     }
     updateRow(row, entry) {
       const tool = entry.display?.type === 'tool' ? entry.display : undefined;
+      // Open once when the first image arrives; later updates respect manual collapse.
+      if (tool?.images?.length && !row.dataset.hasImages) {
+        row.dataset.hasImages = 'true'; row.open = true; this.expanded.add(this.key(entry));
+      }
       const thinking = entry.display?.type === 'reasoning';
       const compact = entry.kind === 'queue' || entry.kind === 'error';
       const status = tool ? this.toolStatus(entry) : '';
@@ -216,6 +240,13 @@
       const body = row.lastChild;
       body.replaceChildren();
       if (tool) {
+        if (tool.images?.length) {
+          const gallery = element('div', 'activity-images');
+          tool.images.forEach(image => gallery.append(imagePreview(image, () => {
+            if ($('follow').checked) this.scrollToLatest();
+          })));
+          body.append(gallery);
+        }
         if (tool.input !== undefined) { body.append(element('h4', 'tool-section-label', 'Input'), codeBlock(tool.input, /^[\[{]/.test(tool.input) ? 'json' : 'text', this.send)); }
         if (tool.output !== undefined) { body.append(element('h4', 'tool-section-label', 'Output'), tool.outputFormat === 'markdown' ? markdown(tool.output, this.send) : codeBlock(tool.output, tool.outputFormat || 'text', this.send)); }
         if (tool.input === undefined && tool.output === undefined) body.append(element('pre', 'activity-raw', entry.message));

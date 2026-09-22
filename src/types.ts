@@ -1,9 +1,11 @@
 export type PromptStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
 export type QueueStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'completed';
 export interface Usage { inputTokens: number; outputTokens: number; cost: number }
+export interface GenerationStats { outputTokens: number; durationMs: number; samples: number; estimatedSamples: number }
 export interface PromptItem {
   id: string; text: string; status: PromptStatus; attempts: number; cycleAttempts: number;
   sessionId?: string; error?: string; usage: Usage;
+  generation?: GenerationStats;
 }
 export interface LogEntry {
   id?: string;
@@ -11,10 +13,12 @@ export interface LogEntry {
   message: string; promptId?: string; attempt?: number; data?: unknown;
   display?: LogDisplay;
 }
+export interface DisplayImage { src: string; label: string }
 export type LogDisplay = { type: 'response' | 'reasoning' } | {
   type: 'tool'; name: string; callId?: string; agentId?: string;
   status: 'running' | 'completed' | 'failed' | 'unknown';
   input?: string; output?: string; outputFormat?: 'markdown' | 'json'; summary?: string; durationMs?: number;
+  images?: DisplayImage[];
 };
 export interface QueueState {
   version: 1; status: QueueStatus; workspace?: string; items: PromptItem[];

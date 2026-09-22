@@ -23,6 +23,7 @@ export async function run(): Promise<void> {
     if (!panel) await new Promise(resolve=>setTimeout(resolve,100));
   }
   assert.ok(panel,'Sidebar webview must render');
+  assert.equal(await panel.locator('#generationSpeed').innerText(), '—', 'No fabricated speed before a timed response');
   const prompts = [
     "Create hello.txt with 'hi' as its only line. Use the file editor tool and finish.",
     "Add a second line containing 'second' to hello.txt. The final file must have exactly two lines: hi and second. If already correct, verify and finish without adding duplicates."
@@ -78,8 +79,16 @@ export async function run(): Promise<void> {
 }
 
 async function verifyActivityPanel(panel: Frame, api: PromptLoopController, artifacts: string): Promise<void> {
-  assert.equal(await panel.locator('.activity-entry[data-kind="tool"]').count(), 3, 'Each attempt has one paired tool card');
-  assert.equal(await panel.locator('.activity-entry[data-kind="tool"][data-status="completed"]').count(), 3);
+  assert.equal(await panel.locator('#generationSpeed').innerText(), '10.0', 'Speed uses total tokens / total time across prompts and retries');
+  assert.match(await panel.locator('#generationSpeedMetric').getAttribute('title') ?? '', /3 completed model responses/);
+  assert.equal(await panel.locator('.activity-entry[data-kind="tool"]').count(), 7, 'Editor attempts and four image tools have paired cards');
+  assert.equal(await panel.locator('.activity-entry[data-kind="tool"][data-status="completed"]').count(), 7);
+  assert.equal(await panel.locator('.activity-image img').count(), 3, 'MCP, Cline and workspace image results render');
+  await panel.waitForFunction(() => Array.from(document.querySelectorAll<HTMLImageElement>('.activity-image img')).every(image => image.complete && image.naturalWidth > 0));
+  assert.equal(await panel.locator('details[open] .activity-image img').count(), 3, 'Image cards expand automatically');
+  const imageState = api.queue.snapshot().logs.filter(entry => entry.display?.type === 'tool' && entry.display.images?.length);
+  assert.equal(imageState.length, 3);
+  assert.ok(imageState.every(entry => entry.display?.type === 'tool' && entry.display.images!.every(image => !image.src.startsWith('data:'))), 'Saved display state contains file references');
   assert.equal(await panel.locator('.activity-markdown h4').filter({hasText:'File updated'}).count(), 3);
   const tool = panel.locator('.activity-entry[data-kind="tool"]').last();
   await tool.locator('summary').click();
@@ -87,7 +96,7 @@ async function verifyActivityPanel(panel: Frame, api: PromptLoopController, arti
   assert.match(await tool.innerText(), /Input[\s\S]*hello.txt[\s\S]*Output[\s\S]*12 ms/i);
   assert.ok(await tool.locator('.diff-added').count());
   await panel.locator('[data-filter="tools"]').click();
-  assert.equal(await panel.locator('.activity-entry').count(), 3);
+  assert.equal(await panel.locator('.activity-entry').count(), 7);
   await panel.locator('#activitySearch').fill('no-such-output');
   assert.equal(await panel.locator('.activity-entry').count(), 0);
   assert.match(await panel.locator('.activity-empty').innerText(), /No matching activity/);
@@ -119,6 +128,10 @@ async function verifyActivityPanel(panel: Frame, api: PromptLoopController, arti
   const postState = () => panel.evaluate(data => window.postMessage(data, '*'), {type:'state',state,settings:defaultSettings,busy:true});
   await postState();
   await panel.locator('[data-key="ui-safety"]').waitFor({state:'attached'});
+  state.items[0].generation!.estimatedSamples = 1;
+  await postState();
+  await panel.waitForFunction(() => document.getElementById('generationSpeed')?.textContent === '~10.0');
+  assert.match(await panel.locator('#generationSpeedMetric').getAttribute('title') ?? '', /Estimated/);
   assert.equal(await panel.locator('#transcript img, #transcript script, #transcript iframe').count(), 0);
   assert.equal(await panel.locator('#transcript a').count(), 1);
   assert.equal(await panel.locator('#transcript a').getAttribute('href'), 'https://example.com');
@@ -138,6 +151,24 @@ async function verifyActivityPanel(panel: Frame, api: PromptLoopController, arti
   await panel.locator('#jumpLatest').click();
   assert.equal(await panel.locator('#follow').isChecked(), true);
   assert.ok(await panel.locator('#transcript').evaluate(node => node.scrollHeight - node.clientHeight - node.scrollTop < 5));
+
+  // Images arriving mid-call open immediately, preserve follow mode, and remain collapsible.
+  const imageSrc = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6VAAAAABJRU5ErkJggg==';
+  stream.display = {...stream.display as Extract<NonNullable<LogEntry['display']>, {type:'tool'}>,status:'running',images:[{src:imageSrc,label:'Streaming image'}]};
+  await postState();
+  await panel.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-key="ui-stream"] img')?.naturalWidth === 1);
+  assert.equal(await streaming.getAttribute('open'), '');
+  assert.equal(await panel.locator('#follow').isChecked(), true);
+  await streaming.locator('summary').click();
+  stream.display = {...stream.display,status:'completed',output:'Image complete'};
+  await postState();
+  await panel.locator('[data-key="ui-stream"][data-status="completed"]').waitFor({state:'attached'});
+  assert.equal(await streaming.getAttribute('open'), null, 'Image updates respect manual collapse');
+  stream.display = {...stream.display,images:[{src:'javascript:window.activityInjected=true',label:'Unsafe source'}]};
+  await postState();
+  await panel.waitForFunction(() => document.querySelector('[data-key="ui-stream"] figcaption')?.textContent?.includes('Preview unavailable'));
+  assert.equal(await streaming.locator('img').getAttribute('src'), null);
+  assert.equal(await panel.evaluate(() => (window as any).activityInjected), undefined);
 
   // Return to actual fixture output for the screenshot and final state.
   api.refresh();

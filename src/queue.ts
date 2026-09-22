@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { normalizeEvent } from './ndjson';
+import { GenerationTracker } from './generation';
 import { emptyUsage, LogDisplay, LogEntry, PromptItem, QueueState, RunHandle, Runner, Settings } from './types';
 
 export function composePrompt(item: PromptItem, settings: Settings): string {
@@ -18,7 +19,8 @@ export class PromptQueue extends EventEmitter {
   private active?: RunHandle;
   private interruption?: 'pause' | 'stop' | 'skip' | 'retry';
   private disposed = false;
-  constructor(private readonly runner: Runner, private readonly settings: () => Settings, saved?: QueueState) {
+  constructor(private readonly runner: Runner, private readonly settings: () => Settings, saved?: QueueState,
+    private readonly prepareDisplay: (display: LogDisplay) => LogDisplay = display => display) {
     super();
     this.state = saved?.version === 1 ? structuredClone(saved) : { version: 1, status: 'idle', items: [], activity: 'Ready when you are', logs: [] };
     for (const entry of this.state.logs) entry.id ??= randomUUID();
@@ -35,8 +37,11 @@ export class PromptQueue extends EventEmitter {
   get busy(): boolean { return !!this.loop; }
   private change(): void { this.emit('change'); }
   private log(kind: LogEntry['kind'], message: string, item?: PromptItem, data?: unknown, display?: LogDisplay): void {
+    if (display) display = this.prepareDisplay(display);
     const entry: LogEntry = { id: randomUUID(), time: new Date().toISOString(), kind, message: message.slice(0, 20000), promptId: item?.id, attempt: item?.attempts, data, display };
     this.emit('log', entry);
+    // Full binary results are already on disk; don't clone them on every UI refresh.
+    const retainedData = display?.type === 'tool' && display.images?.length ? undefined : data;
     const previous = this.state.logs.at(-1);
     const event = (data as any)?.event;
     const previousEvent = (previous?.data as any)?.event;
@@ -49,14 +54,17 @@ export class PromptQueue extends EventEmitter {
         name: display.name === 'Tool' ? previousDisplay.name : display.name,
         status: display.status === 'unknown' ? previousDisplay.status : display.status
       };
-      tool.message = message.slice(0, 20000); tool.data = data;
+      if (previousDisplay.images && display.images) {
+        tool.display.images = [...new Map([...previousDisplay.images, ...display.images].map(image => [image.src, image])).values()].slice(-8);
+      }
+      tool.message = message.slice(0, 20000); tool.data = retainedData;
     } else if (kind === 'text' && previous?.kind === 'text' && previous.promptId === item?.id && previous.attempt === item?.attempts
       && event?.contentType === previousEvent?.contentType && event?.type?.startsWith('content_') && previousEvent?.type !== 'content_end') {
       previous.message = (event.type === 'content_end' ? message : previous.message + message).slice(-20000);
       previous.data = data;
     } else {
       // Keep emitted disk-log records immutable when a display entry streams updates.
-      this.state.logs.push({ ...entry });
+      this.state.logs.push({ ...entry, data: retainedData });
       if (this.state.logs.length > 500) this.state.logs.shift();
     }
     this.change();
@@ -161,12 +169,21 @@ export class PromptQueue extends EventEmitter {
       this.state.activity = `Prompt ${this.state.items.indexOf(item) + 1} · attempt ${item.attempts}`;
       let lastActivity = Date.now(), success = false, failure: string | undefined, stalled = false;
       const inferenceRequests = new Set<string>();
+      const generation = new GenerationTracker();
       const baseUsage = { ...item.usage };
       const usage = emptyUsage();
       this.log('queue', `Attempt ${item.attempts} started${item.sessionId ? `; resuming ${item.sessionId}` : '; new session'}.`, item);
       let timer: NodeJS.Timeout | undefined;
       try {
         this.active = this.runner({ workspace: this.state.workspace!, prompt: composePrompt(item, settings), sessionId: item.sessionId, settings }, raw => {
+          const sample = generation.observe(raw);
+          if (sample) {
+            item.generation ??= { outputTokens: 0, durationMs: 0, samples: 0, estimatedSamples: 0 };
+            item.generation.outputTokens += sample.outputTokens;
+            item.generation.durationMs += sample.durationMs;
+            item.generation.samples++;
+            if (sample.estimated) item.generation.estimatedSamples++;
+          }
           const inference = raw as { type?: string; id?: string; phase?: string };
           if (inference?.type === 'ollama_request' && inference.id) {
             if (inference.phase === 'started') inferenceRequests.add(inference.id);

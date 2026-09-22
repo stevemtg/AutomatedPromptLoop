@@ -4,6 +4,7 @@ import { PromptQueue } from './queue';
 import { runCline } from './runner';
 import { defaultSettings, QueueState, Settings } from './types';
 import { PromptLoopView } from './webview';
+import { ImageCache } from './images';
 
 let controller: PromptLoopController | undefined;
 export async function activate(context: vscode.ExtensionContext): Promise<PromptLoopController> {
@@ -24,8 +25,10 @@ export class PromptLoopController {
   private view: PromptLoopView;
   private closed = false;
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.queue = new PromptQueue(runCline, () => this.settings(), context.workspaceState.get<QueueState>('queue'));
-    this.view = new PromptLoopView(context.extensionUri, this);
+    const imageDirectory = vscode.Uri.joinPath(context.storageUri ?? context.globalStorageUri, 'images');
+    const imageCache = new ImageCache(imageDirectory.fsPath, message => this.output.appendLine(message));
+    this.queue = new PromptQueue(runCline, () => this.settings(), context.workspaceState.get<QueueState>('queue'), display => imageCache.prepare(display));
+    this.view = new PromptLoopView(context.extensionUri, this, imageDirectory);
   }
   settings(): Settings {
     const workspace = this.queue?.snapshot().workspace;

@@ -34,8 +34,23 @@ process.stdin.on('end', () => {
   emit({type:'agent_event', event:{type:'content_start',contentType:'tool',toolName:'editor',toolCallId:'edit-hello',input:{path:'hello.txt',new_text:second ? 'hi\nsecond\n' : 'hi\n'}}});
   fs.writeFileSync(path.join(workspace,'hello.txt'), second ? 'hi\nsecond\n' : 'hi\n');
   emit({type:'agent_event', event:{type:'content_end',contentType:'tool',toolName:'editor',toolCallId:'edit-hello',output:{success:true,result:'Updated `hello.txt`.\n\n```diff\n+ hi\n' + (second ? '+ second\n' : '') + '```'},durationMs:12}});
+  if (!second) {
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6VAAAAABJRU5ErkJggg==';
+    fs.writeFileSync(path.join(workspace, 'crop.png'), Buffer.from(png, 'base64'));
+    const results = {
+      generate_image: {content:[{type:'text',text:'Generated preview.'},{type:'image',mimeType:'image/png',data:png}]},
+      crop_zoom: {output_path:'crop.png'},
+      check_transparency: {has_transparency:true,transparent_pixels:1},
+      remove_bg: {content:[{type:'image',mediaType:'image/png',data:png},{type:'resource',resource:{mimeType:'image/png',blob:png}}]}
+    };
+    for (const [toolName, output] of Object.entries(results)) {
+      emit({type:'agent_event',event:{type:'content_start',contentType:'tool',toolName,toolCallId:toolName,input:{prompt:'Preview fixture'}}});
+      emit({type:'agent_event',event:{type:'content_end',contentType:'tool',toolName,toolCallId:toolName,output}});
+    }
+  }
   emit({type:'agent_event', event:{type:'content_end',contentType:'text',text:'## File updated\n\n**Verified** the contents of `hello.txt`.\n\n- [x] Apply the requested edit\n- [x] Check the result\n\n```text\nhi\n' + (second ? 'second\n' : '') + '```'}});
   emit({type:'agent_event',event:{type:'usage',inputTokens:10,outputTokens:2,totalInputTokens:10,totalOutputTokens:2,totalCost:.01}});
+  emit({type:'generation_metrics',requestId:'fixture-generation',outputTokens:2,durationMs:second ? (forceFailure ? 200 : 300) : 100});
   emit({type:'agent_event',event:{type:'done',reason:'completed',text:'Done',usage:{inputTokens:10,outputTokens:2,totalCost:.01}}});
   emit({type:'run_result',finishReason:'completed',usage:{inputTokens:10,outputTokens:2,totalCost:.01}});
   process.exitCode = forceFailure ? 17 : 0;

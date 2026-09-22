@@ -1,12 +1,13 @@
 import { StringDecoder } from 'node:string_decoder';
 import { LogDisplay } from './types';
+import { extractImages } from './images';
 
 /** Handles split UTF-8 characters, multiple records per chunk and a final line without LF. */
 export class NdjsonParser {
   private decoder = new StringDecoder('utf8');
   private pending = '';
   private dropping = false;
-  constructor(private readonly onRecord: (value: unknown) => void, private readonly onDiagnostic: (text: string) => void, private readonly maxLine = 4 * 1024 * 1024) {}
+  constructor(private readonly onRecord: (value: unknown) => void, private readonly onDiagnostic: (text: string) => void, private readonly maxLine = 32 * 1024 * 1024) {}
   write(chunk: Buffer | string): void {
     this.pending += typeof chunk === 'string' ? chunk : this.decoder.write(chunk);
     let newline: number;
@@ -18,7 +19,7 @@ export class NdjsonParser {
     }
     if (this.pending.length > this.maxLine) {
       this.pending = ''; this.dropping = true;
-      this.onDiagnostic('Cline output line exceeded the 4 MiB limit and was discarded.');
+      this.onDiagnostic(`Cline output line exceeded the ${this.maxLine} byte limit and was discarded.`);
     }
   }
   end(): void {
@@ -51,15 +52,17 @@ function displayText(value: unknown): string | undefined {
   return text.length > 20000 ? text.slice(0, 20000) + '\n… Truncated. Open the full log file for more.' : text;
 }
 function toolDisplay(event: RecordValue, outer: RecordValue, type: string): LogDisplay {
-  const output = event.output ?? event.update ?? event.result;
+  const extracted = extractImages(event.output ?? event.update ?? event.result);
+  const output = extracted.value;
   const outputs = Array.isArray(output) ? output : [output];
-  const failed = /error|failed/.test(type) || event.success === false || event.is_error === true
-    || outputs.some(value => object(value).success === false || object(value).is_error === true || object(value).error);
+  const failed = /error|failed/.test(type) || event.success === false || event.is_error === true || event.isError === true
+    || outputs.some(value => object(value).success === false || object(value).is_error === true || object(value).isError === true || object(value).error);
   const completed = type === 'content_end' || /tool_(result|end|complete)/.test(type) || event.output !== undefined;
   const display: Extract<LogDisplay, { type: 'tool' }> = {
     type: 'tool', name: String(event.toolName ?? event.name ?? object(event.toolCall).name ?? 'Tool').slice(0, 200),
     status: failed ? 'failed' : completed ? 'completed' : /start|tool_call/.test(type) ? 'running' : 'unknown'
   };
+  if (extracted.images.length) display.images = extracted.images;
   const callId = event.toolCallId ?? object(event.toolCall).id;
   const agentId = outer.parentAgentId ?? event.parentAgentId;
   if (typeof callId === 'string') display.callId = callId.slice(0, 500);
@@ -72,7 +75,12 @@ function toolDisplay(event: RecordValue, outer: RecordValue, type: string): LogD
   }
   if (output !== undefined) {
     const results = outputs.map(value => object(value));
+    const content = Array.isArray(output) ? output : object(output).content;
     if (typeof output === 'string') { display.output = displayText(output); display.outputFormat = 'markdown'; }
+    else if (Array.isArray(content) && content.length && content.every(value => typeof value === 'string' || object(value).type === 'text' && typeof object(value).text === 'string')) {
+      display.output = displayText(content.map(value => typeof value === 'string' ? value : value.text).join('\n\n'));
+      display.outputFormat = 'markdown';
+    }
     else if (results.length && results.every(value => typeof value.result === 'string')) {
       display.output = displayText(results.map(value => `${results.length > 1 && typeof value.query === 'string' ? value.query + '\n\n' : ''}${value.result}`).join('\n\n---\n\n'));
       display.outputFormat = 'markdown';
@@ -102,11 +110,12 @@ export function normalizeEvent(raw: unknown): NormalizedEvent {
   const hasUsage = Object.keys(usage).length > 0 || type === 'usage';
   const metrics = hasUsage && Object.keys(usage).length === 0 ? event : usage;
   const numeric = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+  const display = isTool ? toolDisplay(event, outer, type) : undefined;
   const message = String(event.text ?? event.reasoning ?? event.message ?? event.error?.message ?? event.error
-    ?? (isTool ? `${event.toolName ?? event.name ?? object(event.toolCall).name ?? type}: ${JSON.stringify(event.input ?? event.output ?? event.update ?? '')}` : failed ? `Cline finished: ${finishReason ?? type}` : type));
+    ?? (display?.type === 'tool' ? `${display.name}: ${display.input ?? display.output ?? ''}` : failed ? `Cline finished: ${finishReason ?? type}` : type));
   return {
     kind: failed ? 'error' : isTool ? 'tool' : hasUsage ? 'usage' : isText ? 'text' : 'event',
-    display: isTool ? toolDisplay(event, outer, type) : isText ? { type: event.contentType === 'reasoning' || /reasoning/.test(type) ? 'reasoning' : 'response' } : undefined,
+    display: display ?? (isText ? { type: event.contentType === 'reasoning' || /reasoning/.test(type) ? 'reasoning' : 'response' } : undefined),
     message, sessionId: typeof sessionId === 'string' ? sessionId : undefined,
     success, failure: failed && !childEvent ? message : undefined,
     meaningful: type !== 'heartbeat' && type !== 'ping' && type !== 'keepalive' && outer.level === undefined,

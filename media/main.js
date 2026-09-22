@@ -25,7 +25,7 @@
     const el = document.createElement('button'); el.className = 'quiet'; el.textContent = label; el.title = title; el.setAttribute('aria-label', title); el.addEventListener('click', action); return el;
   }
   function renderQueue(items) {
-    const signature = JSON.stringify(items.map(({usage, ...item}) => item));
+    const signature = JSON.stringify(items.map(({usage, generation, ...item}) => item));
     if (signature === queueSignature || $('queue').querySelector('textarea')) return;
     queueSignature = signature;
     const fragment = document.createDocumentFragment();
@@ -80,6 +80,18 @@
     $('session').textContent=current?.sessionId||[...state.items].reverse().find(item=>item.sessionId)?.sessionId||'No active session';
     const usage=state.items.reduce((sum,item)=>({inputTokens:sum.inputTokens+item.usage.inputTokens,outputTokens:sum.outputTokens+item.usage.outputTokens,cost:sum.cost+item.usage.cost}),{inputTokens:0,outputTokens:0,cost:0});
     $('tokensIn').textContent=usage.inputTokens.toLocaleString();$('tokensOut').textContent=usage.outputTokens.toLocaleString();$('cost').textContent=`$${usage.cost.toFixed(4)}`;
+    const generation = state.items.reduce((sum, item) => {
+      const sample = item.generation;
+      if (sample && Number.isFinite(sample.outputTokens) && sample.outputTokens > 0 && Number.isFinite(sample.durationMs) && sample.durationMs > 0) {
+        sum.outputTokens += sample.outputTokens; sum.durationMs += sample.durationMs;
+        sum.samples += sample.samples || 0; sum.estimatedSamples += sample.estimatedSamples || 0;
+      }
+      return sum;
+    }, { outputTokens: 0, durationMs: 0, samples: 0, estimatedSamples: 0 });
+    const speed = generation.durationMs > 0 ? generation.outputTokens * 1000 / generation.durationMs : undefined;
+    $('generationSpeed').textContent = speed === undefined ? '—' : `${generation.estimatedSamples ? '~' : ''}${speed.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
+    $('generationSpeedMetric').title = speed === undefined ? 'Waiting for a completed model response with token counts and timing.'
+      : `Average across ${generation.samples} completed model responses in this queue, including retries. Total generated tokens divided by total generation time. ${generation.estimatedSamples ? 'Estimated from model-turn elapsed time; includes prompt processing and network latency, excludes tool execution.' : 'Provider-reported generation time; excludes model loading, prompt processing, and tool execution.'}`;
     $('footer').textContent=`${settings.stallTimeout}s stall timeout · ${settings.maxAttempts} attempts · auto-approve ${settings.autoApprove?'on':'off'}`;
     renderQueue(state.items);transcript.update(state.logs, state.items, busy && state.status === 'running');
   });
