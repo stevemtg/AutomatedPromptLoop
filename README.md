@@ -2,6 +2,14 @@
 
 A standalone Visual Studio Code extension that runs a list of prompts against the current project with the npm-installed Cline CLI. It streams activity into a sidebar, advances on confirmed completion, and retries failed or stalled attempts with a completion reminder.
 
+## License
+
+This project uses the custom [Garrett Colas Attribution License](LICENSE). You may use, modify, redistribute, and sell the code, including in closed-source software, provided you retain the copyright and license notices and credit Garrett Colas.
+
+Distributions and hosted applications or services incorporating substantial portions of this code must include this readable credit in a README, NOTICE, credits/About section, or accompanying or user-accessible documentation:
+
+> This software includes code originally obtained from Garrett Colas.
+
 ## Install and run
 
 1. Install Node.js and the Cline CLI (`npm install -g cline`). Configure a working provider with `cline auth` or `cline config`.

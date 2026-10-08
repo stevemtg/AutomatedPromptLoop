@@ -4,7 +4,7 @@
   "description": "Run, monitor, and recover a queue of Cline prompts in your current project.",
   "version": "0.1.0",
   "publisher": "local-prompt-loop",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "vscode": "^1.95.0"
   },
