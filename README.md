@@ -2,6 +2,12 @@
 
 A standalone Visual Studio Code extension that runs a list of prompts against the current project with the npm-installed Cline CLI. It streams activity into a sidebar, advances on confirmed completion, and retries failed or stalled attempts with a completion reminder.
 
+<p align="center">
+  <img width="45%" alt="PromptLoop1" src="https://github.com/user-attachments/assets/33fd29bb-1d26-4614-a339-d6ce66ad18d9" />
+  <img width="45%" alt="PromptLoop2" src="https://github.com/user-attachments/assets/0ccd0649-0ce4-489f-82b7-ee9c3d68cf0e" />
+</p>
+
+
 ## License
 
 This project uses the custom [Garrett Colas Attribution License](LICENSE). You may use, modify, redistribute, and sell the code, including in closed-source software, provided you retain the copyright and license notices and credit Garrett Colas.
